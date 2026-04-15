@@ -83,6 +83,8 @@ echo -e "  Ubuntu 开发环境缓存清理脚本  |  $(date '+%Y-%m-%d %H:%M:%S'
 #  1. APT
 # =============================================================================
 section "1/7  APT 缓存"
+APT_BEFORE=$(dir_size_mb /var/cache/apt/archives)
+
 info "清理 apt 下载包缓存..."
 sudo apt-get clean -y
 ok "apt-get clean 完成"
@@ -95,8 +97,8 @@ info "清理过期的 apt 列表缓存..."
 sudo apt-get autoclean -y
 ok "apt-get autoclean 完成"
 
-APT_SIZE=$(dir_size_mb /var/cache/apt/archives)
-FREED=$((FREED + APT_SIZE))
+APT_AFTER=$(dir_size_mb /var/cache/apt/archives)
+FREED=$((FREED + APT_BEFORE - APT_AFTER))
 
 # =============================================================================
 #  2. uv (Python 包管理器)
@@ -104,6 +106,8 @@ FREED=$((FREED + APT_SIZE))
 section "2/7  uv 缓存"
 UV_CACHE="${UV_CACHE_DIR:-$HOME/.cache/uv}"
 if command -v uv &>/dev/null; then
+  UV_MB=$(dir_size_mb "$UV_CACHE")
+  FREED=$((FREED + UV_MB))
   info "执行 uv cache clean..."
   uv cache clean
   ok "uv cache clean 完成"
@@ -117,6 +121,13 @@ fi
 # =============================================================================
 section "3/7  Go 缓存"
 if command -v go &>/dev/null; then
+  # 先统计缓存大小，再清理
+  GO_BUILD_CACHE=$(go env GOCACHE 2>/dev/null || echo "$HOME/.cache/go/build")
+  if [[ -d "$GO_BUILD_CACHE" ]]; then
+    MB=$(dir_size_mb "$GO_BUILD_CACHE")
+    FREED=$((FREED + MB))
+  fi
+
   info "清理 Go build 缓存 (go clean -cache)..."
   go clean -cache
   ok "go clean -cache 完成"
@@ -126,7 +137,8 @@ if command -v go &>/dev/null; then
   ok "go clean -testcache 完成"
 
   info "清理 Go modcache (go clean -modcache)..."
-  read -r -p "  $(echo -e ${YELLOW})是否同时清理 Go module 缓存？这将删除所有已下载的依赖，下次构建需重新下载。[y/N]${RESET} " yn
+  echo -ne "  ${YELLOW}是否同时清理 Go module 缓存？这将删除所有已下载的依赖，下次构建需重新下载。[y/N]${RESET} "
+  read -r yn
   if [[ "${yn,,}" == "y" ]]; then
     go clean -modcache
     ok "go clean -modcache 完成"
@@ -137,12 +149,6 @@ else
   warn "go 未安装，跳过"
 fi
 
-# Go 构建缓存目录（统计大小）
-GO_BUILD_CACHE=$(go env GOCACHE 2>/dev/null || echo "$HOME/.cache/go/build")
-if [[ -d "$GO_BUILD_CACHE" ]]; then
-  MB=$(dir_size_mb "$GO_BUILD_CACHE")
-  FREED=$((FREED + MB))
-fi
 
 # =============================================================================
 #  4. Java / Maven
@@ -157,7 +163,8 @@ if [[ -d "$MAVEN_REPO" ]]; then
   find "$MAVEN_REPO" -name "*.lastUpdated"         -delete 2>/dev/null && ok "*.lastUpdated 已清理"
   find "$MAVEN_REPO" -name "*.part"                -delete 2>/dev/null && ok "*.part 不完整下载文件已清理"
 
-  read -r -p "  $(echo -e ${YELLOW})是否清理整个 Maven 本地仓库 (~/.m2/repository)？下次构建将重新下载所有依赖。[y/N]${RESET} " yn
+  echo -ne "  ${YELLOW}是否清理整个 Maven 本地仓库 (~/.m2/repository)？下次构建将重新下载所有依赖。[y/N]${RESET} "
+  read -r yn
   if [[ "${yn,,}" == "y" ]]; then
     clean_path "$MAVEN_REPO"
   else
@@ -174,6 +181,9 @@ clean_path "$MAVEN_TMP"
 # =============================================================================
 section "5/7  npm 缓存"
 if command -v npm &>/dev/null; then
+  NPM_CACHE="${NPM_CONFIG_CACHE:-$HOME/.npm}"
+  NPM_MB=$(dir_size_mb "$NPM_CACHE")
+  FREED=$((FREED + NPM_MB))
   info "执行 npm cache clean --force..."
   npm cache clean --force
   ok "npm cache clean 完成"
@@ -192,14 +202,21 @@ clean_path "$NPX_CACHE"
 # =============================================================================
 section "6/7  pnpm 缓存"
 if command -v pnpm &>/dev/null; then
+  # 先统计 store 大小，再修剪
+  PNPM_STORE=$(pnpm store path 2>/dev/null || echo "")
+  if [[ -n "$PNPM_STORE" ]]; then
+    BEFORE=$(dir_size_mb "$PNPM_STORE")
+  else
+    BEFORE=0
+  fi
+
   info "执行 pnpm store prune..."
   pnpm store prune
   ok "pnpm store prune 完成"
 
-  PNPM_STORE=$(pnpm store path 2>/dev/null || echo "")
   if [[ -n "$PNPM_STORE" ]]; then
-    MB=$(dir_size_mb "$PNPM_STORE")
-    FREED=$((FREED + MB))
+    AFTER=$(dir_size_mb "$PNPM_STORE")
+    FREED=$((FREED + BEFORE - AFTER))
   fi
 else
   PNPM_CACHE="${PNPM_STORE:-$HOME/.local/share/pnpm/store}"
