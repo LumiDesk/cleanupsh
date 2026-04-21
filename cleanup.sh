@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  cleanup.sh — Ubuntu 开发环境一键缓存清理脚本
-#  适用工具: apt / uv / Go / Java+Maven / npm / pnpm / Cargo
+#  cleanup.sh — Ubuntu 开发环境一键缓存清理脚本 (加强版)
+#  适用工具: apt / uv / Go / Java+Maven / npm / pnpm / Cargo / Docker / Flatpak
 # =============================================================================
 
 set -euo pipefail
@@ -22,7 +22,7 @@ section() { echo -e "\n${BOLD}${CYAN}══════════════�
             echo -e "${BOLD}${CYAN}  $*${RESET}"; \
             echo -e "${BOLD}${CYAN}══════════════════════════════════════${RESET}"; }
 
-# 释放的空间统计
+# 释放的空间统计 (MB)
 FREED=0
 
 # 计算目录大小（MB），目录不存在返回 0
@@ -41,7 +41,7 @@ clean_dir() {
   if [[ -d "$path" ]]; then
     local mb
     mb=$(dir_size_mb "$path")
-    rm -rf "${path:?}"/*  2>/dev/null || true
+    rm -rf "${path:?}"/* 2>/dev/null || true
     FREED=$((FREED + mb))
     ok "已清理 $path  (~${mb} MB)"
   else
@@ -63,7 +63,7 @@ clean_path() {
   fi
 }
 
-# ---------- 检查是否以普通用户运行（sudo 权限用于 apt） ----------
+# ---------- 检查是否以普通用户运行 ----------
 if [[ $EUID -eq 0 ]]; then
   echo -e "${RED}[WARN]${RESET} 请勿直接以 root 运行本脚本，脚本会在需要时自动请求 sudo。"
   exit 1
@@ -77,12 +77,12 @@ echo " ██║     ██║     ██╔══╝  ██╔══██║�
 echo " ╚██████╗███████╗███████╗██║  ██║██║ ╚████║╚██████╔╝██║     "
 echo "  ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝     "
 echo -e "${RESET}"
-echo -e "  Ubuntu 开发环境缓存清理脚本  |  $(date '+%Y-%m-%d %H:%M:%S')\n"
+echo -e "  Ubuntu 开发环境缓存清理脚本 (加强版) |  $(date '+%Y-%m-%d %H:%M:%S')\n"
 
 # =============================================================================
 #  1. APT
 # =============================================================================
-section "1/7  APT 缓存"
+section "1/9  APT 缓存"
 APT_BEFORE=$(dir_size_mb /var/cache/apt/archives)
 
 info "清理 apt 下载包缓存..."
@@ -103,7 +103,7 @@ FREED=$((FREED + APT_BEFORE - APT_AFTER))
 # =============================================================================
 #  2. uv (Python 包管理器)
 # =============================================================================
-section "2/7  uv 缓存"
+section "2/9  uv 缓存"
 UV_CACHE="${UV_CACHE_DIR:-$HOME/.cache/uv}"
 if command -v uv &>/dev/null; then
   UV_MB=$(dir_size_mb "$UV_CACHE")
@@ -119,9 +119,8 @@ fi
 # =============================================================================
 #  3. Go
 # =============================================================================
-section "3/7  Go 缓存"
+section "3/9  Go 缓存"
 if command -v go &>/dev/null; then
-  # 先统计缓存大小，再清理
   GO_BUILD_CACHE=$(go env GOCACHE 2>/dev/null || echo "$HOME/.cache/go/build")
   if [[ -d "$GO_BUILD_CACHE" ]]; then
     MB=$(dir_size_mb "$GO_BUILD_CACHE")
@@ -149,21 +148,20 @@ else
   warn "go 未安装，跳过"
 fi
 
-
 # =============================================================================
 #  4. Java / Maven
 # =============================================================================
-section "4/7  Maven 缓存"
+section "4/9  Maven 缓存"
 MAVEN_REPO="$HOME/.m2/repository"
 MAVEN_TMP="$HOME/.m2/tmp"
 
 if [[ -d "$MAVEN_REPO" ]]; then
-  info "清理 Maven 本地仓库中的 _remote.repositories / *.lastUpdated 标记文件..."
+  info "清理 Maven 本地仓库中的临时标记文件..."
   find "$MAVEN_REPO" -name "_remote.repositories" -delete 2>/dev/null && ok "_remote.repositories 已清理"
   find "$MAVEN_REPO" -name "*.lastUpdated"         -delete 2>/dev/null && ok "*.lastUpdated 已清理"
-  find "$MAVEN_REPO" -name "*.part"                -delete 2>/dev/null && ok "*.part 不完整下载文件已清理"
+  find "$MAVEN_REPO" -name "*.part"                -delete 2>/dev/null && ok "*.part 已清理"
 
-  echo -ne "  ${YELLOW}是否清理整个 Maven 本地仓库 (~/.m2/repository)？下次构建将重新下载所有依赖。[y/N]${RESET} "
+  echo -ne "  ${YELLOW}是否清理整个 Maven 本地仓库？下次构建将重新下载所有依赖。[y/N]${RESET} "
   read -r yn
   if [[ "${yn,,}" == "y" ]]; then
     clean_path "$MAVEN_REPO"
@@ -173,13 +171,12 @@ if [[ -d "$MAVEN_REPO" ]]; then
 else
   warn "~/.m2/repository 不存在，跳过"
 fi
-
 clean_path "$MAVEN_TMP"
 
 # =============================================================================
 #  5. npm
 # =============================================================================
-section "5/7  npm 缓存"
+section "5/9  npm 缓存"
 if command -v npm &>/dev/null; then
   NPM_CACHE="${NPM_CONFIG_CACHE:-$HOME/.npm}"
   NPM_MB=$(dir_size_mb "$NPM_CACHE")
@@ -192,83 +189,89 @@ else
   warn "npm 未安装，直接清理 $NPM_CACHE"
   clean_dir "$NPM_CACHE"
 fi
-
-# 额外清理 npx 缓存
-NPX_CACHE="$HOME/.npm/_npx"
-clean_path "$NPX_CACHE"
+clean_path "$HOME/.npm/_npx"
 
 # =============================================================================
 #  6. pnpm
 # =============================================================================
-section "6/7  pnpm 缓存"
+section "6/9  pnpm 缓存"
 if command -v pnpm &>/dev/null; then
-  # 先统计 store 大小，再修剪
-  PNPM_STORE=$(pnpm store path 2>/dev/null || echo "")
-  if [[ -n "$PNPM_STORE" ]]; then
-    BEFORE=$(dir_size_mb "$PNPM_STORE")
-  else
-    BEFORE=0
-  fi
-
+  PNPM_STORE=$(timeout 5 pnpm store path 2>/dev/null || echo "")
+  BEFORE=${PNPM_STORE:+$(dir_size_mb "$PNPM_STORE")}
   info "执行 pnpm store prune..."
-  pnpm store prune
+  timeout 120 pnpm store prune
   ok "pnpm store prune 完成"
-
-  if [[ -n "$PNPM_STORE" ]]; then
-    AFTER=$(dir_size_mb "$PNPM_STORE")
-    FREED=$((FREED + BEFORE - AFTER))
-  fi
+  AFTER=${PNPM_STORE:+$(dir_size_mb "$PNPM_STORE")}
+  FREED=$((FREED + ${BEFORE:-0} - ${AFTER:-0}))
 else
-  PNPM_CACHE="${PNPM_STORE:-$HOME/.local/share/pnpm/store}"
-  warn "pnpm 未安装，直接清理 $PNPM_CACHE"
-  clean_dir "$PNPM_CACHE"
+  warn "pnpm 未安装，跳过"
 fi
 
 # =============================================================================
 #  7. Cargo (Rust)
 # =============================================================================
-section "7/7  Cargo 缓存"
+section "7/9  Cargo 缓存"
 CARGO_REGISTRY="$HOME/.cargo/registry"
 CARGO_GIT="$HOME/.cargo/git"
 
 if command -v cargo &>/dev/null; then
-  # 清理 registry 解压源码（可从 .crate 重新解压，最占空间）
-  if [[ -d "$CARGO_REGISTRY/src" ]]; then
-    MB=$(dir_size_mb "$CARGO_REGISTRY/src")
-    rm -rf "$CARGO_REGISTRY/src" 2>/dev/null || true
-    FREED=$((FREED + MB))
-    ok "已清理 cargo registry/src  (~${MB} MB)"
-  else
-    warn "$CARGO_REGISTRY/src 不存在，跳过"
-  fi
-
-  # 清理 .crate 下载包缓存
-  if [[ -d "$CARGO_REGISTRY/cache" ]]; then
-    MB=$(dir_size_mb "$CARGO_REGISTRY/cache")
-    rm -rf "$CARGO_REGISTRY/cache" 2>/dev/null || true
-    FREED=$((FREED + MB))
-    ok "已清理 cargo registry/cache  (~${MB} MB)"
-  else
-    warn "$CARGO_REGISTRY/cache 不存在，跳过"
-  fi
-
-  # 清理 git 依赖的 checkouts（可重新拉取）
-  if [[ -d "$CARGO_GIT/checkouts" ]]; then
-    MB=$(dir_size_mb "$CARGO_GIT/checkouts")
-    rm -rf "$CARGO_GIT/checkouts" 2>/dev/null || true
-    FREED=$((FREED + MB))
-    ok "已清理 cargo git checkouts  (~${MB} MB)"
-  else
-    warn "$CARGO_GIT/checkouts 不存在，跳过"
-  fi
-
-  # 提示 target/ 目录需手动清理
-  echo -e "  ${YELLOW}[提示]${RESET}  各项目的 target/ 目录未自动清理。"
-  echo -e "         如需释放空间，请在对应项目目录下手动执行: ${BOLD}cargo clean${RESET}"
+  clean_path "$CARGO_REGISTRY/src"
+  clean_path "$CARGO_REGISTRY/cache"
+  clean_path "$CARGO_GIT/checkouts"
+  echo -e "  ${YELLOW}[提示]${RESET} 各项目 target/ 目录请手动在项目内执行 cargo clean"
 else
-  warn "cargo 未安装，直接清理缓存目录"
-  clean_dir "$CARGO_REGISTRY"
-  clean_dir "$CARGO_GIT"
+  warn "cargo 未安装，跳过"
+fi
+
+# =============================================================================
+#  8. Docker (容器镜像与构建缓存)
+# =============================================================================
+section "8/9  Docker 清理"
+if command -v docker &>/dev/null; then
+  info "当前 Docker 占用情况:"
+  docker system df | grep -E "Images|Containers|Volumes" || true
+
+  echo -ne "  ${YELLOW}是否执行 docker system prune？这将删除所有停止的容器及未使用的镜像和卷。[y/N]${RESET} "
+  read -r yn
+  if [[ "${yn,,}" == "y" ]]; then
+    info "正在清理 Docker 资源..."
+    output=$(docker system prune -f --volumes | grep "Total reclaimed space:" || echo "Total reclaimed space: 0B")
+    
+    # 提取数值并换算为 MB
+    reclaimed=$(echo "$output" | awk '{print $NF}')
+    val=$(echo "$reclaimed" | grep -oP '[\d.]+' || echo "0")
+    unit=$(echo "$reclaimed" | grep -oP '[a-zA-Z]+' || echo "B")
+    
+    case "${unit^^}" in
+      GB) mb_val=$(echo "$val" | awk '{print int($1 * 1024)}') ;;
+      MB) mb_val=$(echo "$val" | awk '{print int($1)}') ;;
+      KB) mb_val=1 ;;
+      *)  mb_val=0 ;;
+    esac
+    
+    FREED=$((FREED + mb_val))
+    ok "Docker 清理完成 ($output)"
+  else
+    warn "跳过 Docker 清理"
+  fi
+else
+  warn "docker 未安装，跳过"
+fi
+
+# =============================================================================
+#  9. Flatpak (残留运行时)
+# =============================================================================
+section "9/9  Flatpak 清理"
+if command -v flatpak &>/dev/null; then
+  info "卸载不再需要的 Flatpak 运行时..."
+  BEFORE_FP=$(dir_size_mb /var/lib/flatpak)
+  flatpak uninstall --unused -y
+  AFTER_FP=$(dir_size_mb /var/lib/flatpak)
+  FP_FREED=$((BEFORE_FP - AFTER_FP))
+  FREED=$((FREED + (FP_FREED > 0 ? FP_FREED : 0)))
+  ok "Flatpak 清理完成"
+else
+  warn "flatpak 未安装，跳过"
 fi
 
 # =============================================================================
@@ -276,20 +279,17 @@ fi
 # =============================================================================
 section "额外  系统通用清理"
 
-# Thumbnails
+# Thumbnails & Trash
 clean_dir "$HOME/.cache/thumbnails"
-
-# Trash
 info "清空回收站..."
 if command -v gio &>/dev/null; then
   gio trash --empty 2>/dev/null && ok "回收站已清空"
 else
   clean_dir "$HOME/.local/share/Trash/files"
-  clean_dir "$HOME/.local/share/Trash/info"
 fi
 
-# journalctl 日志（保留最近 3 天）
-info "压缩 systemd journal 日志（保留 3 天）..."
+# journalctl 日志
+info "压缩 systemd journal 日志 (保留 3 天)..."
 sudo journalctl --vacuum-time=3d
 ok "journal 日志清理完成"
 
@@ -301,6 +301,4 @@ echo -e "${BOLD}${GREEN}  清理完成！${RESET}"
 echo -e "${BOLD}${GREEN}══════════════════════════════════════${RESET}"
 echo -e "  🗑️  预计释放空间: ${BOLD}~${FREED} MB${RESET}"
 echo -e "  📅  完成时间: $(date '+%Y-%m-%d %H:%M:%S')"
-echo -e ""
-echo -e "  提示: 部分空间回收需要重启后才会完全体现。"
 echo ""
